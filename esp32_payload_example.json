@@ -1,0 +1,7 @@
+{
+  "device_id": "esp32-room-a",
+  "temperature": 38.4,
+  "humidity": 44.1,
+  "smoke_gas_level": 610,
+  "flame_detected": 0
+}

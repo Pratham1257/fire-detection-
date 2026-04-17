@@ -1,0 +1,44 @@
+Decision Tree Rules for ESP32 Deployment
+=======================================
+
+Priority Safety Rule (evaluate first):
+IF flame_detected == 1 AND smoke_gas_level > 500: class = Fire Emergency
+
+Priority Dry-Heat Rule (evaluate first):
+IF humidity < 30 AND temperature > 45 AND smoke_gas_level > 700: class = Fire Emergency
+
+Early-Warning Progression:
+IF 300 <= smoke_gas_level < 500: Mild Smoke Alert
+IF 500 <= smoke_gas_level < 800: Smoke Warning Alert
+IF 800 <= smoke_gas_level <= 1200: Gas Leakage Alert
+IF smoke_gas_level > 1200 AND temperature > 50: Immediate Fire Alert
+
+Industrial Context Labels:
+IF temperature == 0 AND humidity == 0 AND smoke_gas_level == 0: Sensor Fault
+IF smoke_gas_level > 4000: Sensor Malfunction
+IF flame_detected == 0 AND humidity > 85 AND 300 <= smoke_gas_level < 800 AND temperature < 50: Steam Detected
+IF flame_detected == 0 AND temperature > 50 AND smoke_gas_level < 300: Heat Alert
+IF flame_detected == 0 AND temperature > 55 AND smoke_gas_level > 900 AND humidity < 40: Electrical Fire Risk
+
+|--- temperature <= 45.05
+|   |--- smoke_gas_level <= 650.50
+|   |   |--- smoke_gas_level <= 325.00
+|   |   |   |--- class: False Alarm
+|   |   |--- smoke_gas_level >  325.00
+|   |   |   |--- smoke_gas_level <= 649.50
+|   |   |   |   |--- class: Smoke Warning
+|   |   |   |--- smoke_gas_level >  649.50
+|   |   |   |   |--- humidity <= 43.65
+|   |   |   |   |   |--- class: Smoke Warning
+|   |   |   |   |--- humidity >  43.65
+|   |   |   |   |   |--- class: Gas Leakage
+|   |--- smoke_gas_level >  650.50
+|   |   |--- smoke_gas_level <= 1595.50
+|   |   |   |--- class: Gas Leakage
+|   |   |--- smoke_gas_level >  1595.50
+|   |   |   |--- class: Fire Emergency
+|--- temperature >  45.05
+|   |--- smoke_gas_level <= 774.50
+|   |   |--- class: Smoke Warning
+|   |--- smoke_gas_level >  774.50
+|   |   |--- class: Fire Emergency

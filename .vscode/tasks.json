@@ -1,0 +1,81 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Backend API",
+      "type": "shell",
+      "command": "C:/Users/LENOVO/AppData/Local/Programs/Python/Python313/python.exe",
+      "args": [
+        "-m",
+        "uvicorn",
+        "backend_api:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "fire-system"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Start Streamlit Dashboard",
+      "type": "shell",
+      "command": "C:/Users/LENOVO/AppData/Local/Programs/Python/Python313/python.exe",
+      "args": [
+        "-m",
+        "streamlit",
+        "run",
+        "app.py",
+        "--server.headless",
+        "true",
+        "--server.port",
+        "8501"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "fire-system"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Check Backend Health",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-Command",
+        "Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -Method Get | ConvertTo-Json -Compress"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Start Fire System (Backend + Dashboard)",
+      "dependsOn": [
+        "Start Backend API",
+        "Start Streamlit Dashboard"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}
