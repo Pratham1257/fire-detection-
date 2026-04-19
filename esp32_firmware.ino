@@ -1,5 +1,3 @@
-struct SensorPacket;
-
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -10,51 +8,141 @@ struct SensorPacket;
 // --------------------------------------------------
 // WiFi and Backend Configuration
 // --------------------------------------------------
-const char* WIFI_SSID = "Renu";
+const char* WIFI_SSID     = "Renu";
 const char* WIFI_PASSWORD = "12345678";
-const char* API_HOST_PRIMARY = "10.202.252.180";
-const char* API_HOST_ALT_LAN = "10.19.205.180";
+
+const char* API_HOST_PRIMARY  = "10.202.252.180";
+const char* API_HOST_ALT_LAN  = "10.19.205.180";
 const char* API_HOST_FALLBACK = "192.168.137.1";
-const uint16_t API_PORT = 8000;
-const char* API_URL_PRIMARY = "http://10.202.252.180:8000/api/v1/events/predict";
-const char* API_URL_ALT_LAN = "http://10.19.205.180:8000/api/v1/events/predict";
+const uint16_t API_PORT       = 8000;
+
+const char* API_URL_PRIMARY  = "http://10.202.252.180:8000/api/v1/events/predict";
+const char* API_URL_ALT_LAN  = "http://10.19.205.180:8000/api/v1/events/predict";
 const char* API_URL_FALLBACK = "http://192.168.137.1:8000/api/v1/events/predict";
+
 const char* DEVICE_ID = "esp32-node-01";
-const int WIFI_CONNECT_TIMEOUT_MS = 20000;
-const int BACKEND_HTTP_TIMEOUT_MS = 7000;
-const int BACKEND_POST_RETRY_COUNT = 2;
-const int BACKEND_POST_RETRY_DELAY_MS = 350;
-const int BACKEND_NEGATIVE_CODE_WIFI_RECOVERY_DELAY_MS = 700;
+
+const int           WIFI_CONNECT_TIMEOUT_MS              = 20000;
+const int           WIFI_DHCP_WAIT_MS                    = 8000;
+const int           BACKEND_HTTP_TIMEOUT_MS              = 7000;
+const int           BACKEND_POST_RETRY_COUNT             = 2;
+const int           BACKEND_POST_RETRY_DELAY_MS          = 350;
 const unsigned long BACKEND_REACHABILITY_LOG_INTERVAL_MS = 10000;
-const unsigned long NETWORK_DIAG_LOG_INTERVAL_MS = 15000;
-const unsigned long SMOKE_WARMUP_MS = 20000;
-const int SMOKE_BASELINE_SAMPLES = 80;
-const float SMOKE_FILTER_ALPHA = 0.80f;
-const float SMOKE_NOISE_FLOOR = 120.0f;
-const float SMOKE_BASELINE_DRIFT_ALPHA = 0.999f;
-const int FLAME_CALIBRATION_SAMPLES = 120;
-const int FLAME_FAULT_CONFIRM_CYCLES = 6;
-const float FLAME_FAULT_MAX_TEMP_C = 45.0f;
-const float FLAME_FAULT_MIN_HUMIDITY = 55.0f;
-const int FLAME_FAULT_MAX_SMOKE_LEVEL = 120;
+const unsigned long NETWORK_DIAG_LOG_INTERVAL_MS         = 15000;
+
+const unsigned long SMOKE_WARMUP_MS            = 20000;
+const int           SMOKE_BASELINE_SAMPLES     = 80;
+const float         SMOKE_FILTER_ALPHA         = 0.80f;
+const float         SMOKE_NOISE_FLOOR          = 120.0f;
+const float         SMOKE_BASELINE_DRIFT_ALPHA = 0.999f;
+
+const int           FLAME_CALIBRATION_SAMPLES   = 120;
+const int           FLAME_FAULT_CONFIRM_CYCLES  = 6;
+const float         FLAME_FAULT_MAX_TEMP_C      = 45.0f;
+const float         FLAME_FAULT_MIN_HUMIDITY    = 55.0f;
+const int           FLAME_FAULT_MAX_SMOKE_LEVEL = 120;
 const unsigned long FLAME_FAULT_LOG_INTERVAL_MS = 10000;
 
-unsigned long lastBackendReachabilityLogMs = 0;
-unsigned long lastFlameFaultLogMs = 0;
-unsigned long lastNetworkDiagLogMs = 0;
-float smokeBaselineRaw = 0.0f;
+// --------------------------------------------------
+// Pin Configuration
+// --------------------------------------------------
+#define DHT_PIN    4
+#define DHT_TYPE   DHT22
+#define MQ_PIN     34
+#define FLAME_PIN  27
+#define BUZZER_PIN 25
+#define RELAY_PIN  33
+#define LED_GREEN  12
+#define LED_YELLOW 14
+#define LED_RED    26
+
+const bool FLAME_ACTIVE_LOW = true;
+
+const unsigned long SAMPLE_INTERVAL_MS     = 5000;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 15000;
+
+const int SMOKE_ZERO_THRESHOLD      = 15;
+const int SMOKE_SENSOR_FAULT_CYCLES = 3;
+
+// --------------------------------------------------
+// Global State
+// --------------------------------------------------
+unsigned long lastSampleMs                = 0;
+unsigned long lastWifiRetryMs             = 0;
+unsigned long lastBackendReachabilityLogMs= 0;
+unsigned long lastFlameFaultLogMs         = 0;
+unsigned long lastNetworkDiagLogMs        = 0;
+
+float smokeBaselineRaw   = 0.0f;
 float smokeFilteredLevel = 0.0f;
-bool smokeCalibrated = false;
-int flameInactiveLevel = HIGH;
-int flameSuspiciousCycles = 0;
+bool  smokeCalibrated    = false;
+
+int  flameInactiveLevel           = HIGH;
+int  flameSuspiciousCycles        = 0;
 bool flameInactiveLevelCalibrated = false;
+
+int smokeZeroCycles = 0;
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+DHT dht(DHT_PIN, DHT_TYPE);
+
+// --------------------------------------------------
+// Sensor Packet
+// --------------------------------------------------
+struct SensorPacket {
+  float temperature;
+  float humidity;
+  int   smokeRaw;
+  int   smokeGasLevel;
+  int   flameDetected;
+  bool  smokeSensorFault;
+  bool  flameSensorFault;
+};
+
+// --------------------------------------------------
+// Hardware Helpers
+// --------------------------------------------------
+void setLeds(bool green, bool yellow, bool red) {
+  digitalWrite(LED_GREEN,  green  ? HIGH : LOW);
+  digitalWrite(LED_YELLOW, yellow ? HIGH : LOW);
+  digitalWrite(LED_RED,    red    ? HIGH : LOW);
+}
+
+void relayOn()  { digitalWrite(RELAY_PIN, HIGH); }
+void relayOff() { digitalWrite(RELAY_PIN, LOW);  }
+
+void buzzerBeep(int onMs, int offMs, int count) {
+  for (int i = 0; i < count; i++) {
+    digitalWrite(BUZZER_PIN, HIGH); delay(onMs);
+    digitalWrite(BUZZER_PIN, LOW);  delay(offMs);
+  }
+}
+
+// --------------------------------------------------
+// WiFi Helpers
+// --------------------------------------------------
+bool usingPlaceholderCredentials() {
+  return String(WIFI_SSID) == "YOUR_WIFI_SSID" ||
+         String(WIFI_PASSWORD) == "YOUR_WIFI_PASSWORD";
+}
+
+const char* wifiStatusToText(wl_status_t s) {
+  switch (s) {
+    case WL_CONNECTED:       return "Connected";
+    case WL_NO_SSID_AVAIL:   return "SSID Not Found";
+    case WL_CONNECT_FAILED:  return "Connect Failed";
+    case WL_CONNECTION_LOST: return "Connection Lost";
+    case WL_DISCONNECTED:    return "Disconnected";
+    case WL_IDLE_STATUS:     return "Idle";
+    default:                 return "Unknown";
+  }
+}
 
 void printWifiFailureHints(wl_status_t status) {
   if (status == WL_NO_SSID_AVAIL) {
     Serial.println("Hint: SSID not found. Check WiFi name spelling and router band.");
     return;
   }
-
   if (status == WL_CONNECT_FAILED || status == WL_DISCONNECTED) {
     Serial.println("Hint: Check WiFi password and security mode.");
     Serial.println("Hint: Many ESP32 boards cannot connect to WPA3-only networks.");
@@ -63,16 +151,12 @@ void printWifiFailureHints(wl_status_t status) {
 }
 
 void printTargetNetworkInfo() {
-  int foundNetworks = WiFi.scanNetworks();
-  if (foundNetworks <= 0) {
-    Serial.println("WiFi scan: no networks found.");
-    return;
-  }
+  int found = WiFi.scanNetworks();
+  if (found <= 0) { Serial.println("WiFi scan: no networks found."); return; }
 
   bool targetFound = false;
-  for (int i = 0; i < foundNetworks; i++) {
-    String detectedSsid = WiFi.SSID(i);
-    if (detectedSsid == WIFI_SSID) {
+  for (int i = 0; i < found; i++) {
+    if (WiFi.SSID(i) == WIFI_SSID) {
       targetFound = true;
       Serial.print("WiFi scan target found. RSSI=");
       Serial.print(WiFi.RSSI(i));
@@ -83,597 +167,54 @@ void printTargetNetworkInfo() {
       break;
     }
   }
-
-  if (!targetFound) {
-    Serial.println("WiFi scan: target SSID not visible to ESP32.");
-  }
-
+  if (!targetFound) Serial.println("WiFi scan: target SSID not visible to ESP32.");
   WiFi.scanDelete();
 }
 
-bool usingPlaceholderCredentials() {
-  return String(WIFI_SSID) == "YOUR_WIFI_SSID" || String(WIFI_PASSWORD) == "YOUR_WIFI_PASSWORD";
-}
-
-const char* wifiStatusToText(wl_status_t status) {
-  switch (status) {
-    case WL_CONNECTED:
-      return "Connected";
-    case WL_NO_SSID_AVAIL:
-      return "SSID Not Found";
-    case WL_CONNECT_FAILED:
-      return "Connect Failed";
-    case WL_CONNECTION_LOST:
-      return "Connection Lost";
-    case WL_DISCONNECTED:
-      return "Disconnected";
-    case WL_IDLE_STATUS:
-      return "Idle";
-    default:
-      return "Unknown";
-  }
-}
-
-// --------------------------------------------------
-// Pin Configuration
-// --------------------------------------------------
-#define DHT_PIN 4
-#define DHT_TYPE DHT22
-
-#define MQ_PIN 34
-#define FLAME_PIN 27
-#define BUZZER_PIN 25
-#define RELAY_PIN 33
-
-#define LED_GREEN 12
-#define LED_YELLOW 14
-#define LED_RED 26
-
-// Flame sensor usually gives LOW when flame is detected.
-const bool FLAME_ACTIVE_LOW = true;
-
-// Sampling and reconnect intervals.
-const unsigned long SAMPLE_INTERVAL_MS = 5000;
-const unsigned long WIFI_RETRY_INTERVAL_MS = 15000;
-unsigned long lastSampleMs = 0;
-unsigned long lastWifiRetryMs = 0;
-
-// Treat repeated near-zero smoke readings as a likely wiring/power fault.
-const int SMOKE_ZERO_THRESHOLD = 15;
-const int SMOKE_SENSOR_FAULT_CYCLES = 3;
-int smokeZeroCycles = 0;
-
-LiquidCrystal_I2C lcd(0x27, 16, 2);
-DHT dht(DHT_PIN, DHT_TYPE);
-
-struct SensorPacket {
-  float temperature;
-  float humidity;
-  int smokeRaw;
-  int smokeGasLevel;
-  int flameDetected;
-  bool smokeSensorFault;
-  bool flameSensorFault;
-};
-
-void setLeds(bool green, bool yellow, bool red) {
-  digitalWrite(LED_GREEN, green ? HIGH : LOW);
-  digitalWrite(LED_YELLOW, yellow ? HIGH : LOW);
-  digitalWrite(LED_RED, red ? HIGH : LOW);
-}
-
-void relayOn() {
-  digitalWrite(RELAY_PIN, HIGH);
-}
-
-void relayOff() {
-  digitalWrite(RELAY_PIN, LOW);
-}
-
-void buzzerBeep(int onMs, int offMs, int repeatCount) {
-  for (int i = 0; i < repeatCount; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(onMs);
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(offMs);
-  }
-}
-
-int readSmokeAverage(int samples) {
-  long total = 0;
-
-  for (int i = 0; i < samples; i++) {
-    total += analogRead(MQ_PIN);
-    delay(10);
-  }
-
-  return (int)(total / samples);
-}
-
-void calibrateSmokeBaseline() {
-  Serial.println("Warming up smoke sensor for baseline calibration...");
-  unsigned long start = millis();
-  while (millis() - start < SMOKE_WARMUP_MS) {
-    delay(100);
-  }
-
-  long total = 0;
-  for (int i = 0; i < SMOKE_BASELINE_SAMPLES; i++) {
-    total += analogRead(MQ_PIN);
-    delay(15);
-  }
-
-  smokeBaselineRaw = (float)total / (float)SMOKE_BASELINE_SAMPLES;
-  if (smokeBaselineRaw < 0.0f) {
-    smokeBaselineRaw = 0.0f;
-  }
-  smokeFilteredLevel = 0.0f;
-  smokeCalibrated = true;
-
-  Serial.print("Smoke baseline calibrated (raw): ");
-  Serial.println((int)smokeBaselineRaw);
-}
-
-int normalizeSmokeLevel(int rawSmoke) {
-  if (!smokeCalibrated) {
-    smokeBaselineRaw = (float)rawSmoke;
-    smokeFilteredLevel = 0.0f;
-    smokeCalibrated = true;
-  }
-
-  float adjusted = (float)rawSmoke - smokeBaselineRaw;
-  if (adjusted < 0.0f) {
-    adjusted = 0.0f;
-  }
-
-  // Ignore low-level jitter near baseline.
-  adjusted -= SMOKE_NOISE_FLOOR;
-  if (adjusted < 0.0f) {
-    adjusted = 0.0f;
-  }
-
-  // Allow slow baseline drift compensation in clean-air conditions.
-  if (adjusted < (SMOKE_NOISE_FLOOR * 0.5f)) {
-    smokeBaselineRaw = (SMOKE_BASELINE_DRIFT_ALPHA * smokeBaselineRaw)
-                     + ((1.0f - SMOKE_BASELINE_DRIFT_ALPHA) * (float)rawSmoke);
-  }
-
-  smokeFilteredLevel = (SMOKE_FILTER_ALPHA * smokeFilteredLevel) + ((1.0f - SMOKE_FILTER_ALPHA) * adjusted);
-
-  if (smokeFilteredLevel < 0.0f) {
-    smokeFilteredLevel = 0.0f;
-  }
-
-  return (int)(smokeFilteredLevel + 0.5f);
-}
-
-int toPercent(float value, float maxValue) {
-  if (maxValue <= 0.0f) {
-    return 0;
-  }
-
-  float ratio = value / maxValue;
-  if (ratio < 0.0f) {
-    ratio = 0.0f;
-  }
-  if (ratio > 1.0f) {
-    ratio = 1.0f;
-  }
-
-  return (int)(ratio * 100.0f + 0.5f);
-}
-
 bool isSameSubnet(IPAddress a, IPAddress b, IPAddress mask) {
-  for (int i = 0; i < 4; i++) {
-    if ((a[i] & mask[i]) != (b[i] & mask[i])) {
-      return false;
-    }
-  }
+  for (int i = 0; i < 4; i++)
+    if ((a[i] & mask[i]) != (b[i] & mask[i])) return false;
   return true;
 }
 
 void logNetworkDiagnostics() {
-  if (lastNetworkDiagLogMs != 0
-      && millis() - lastNetworkDiagLogMs < NETWORK_DIAG_LOG_INTERVAL_MS) {
-    return;
-  }
+  if (lastNetworkDiagLogMs != 0 &&
+      millis() - lastNetworkDiagLogMs < NETWORK_DIAG_LOG_INTERVAL_MS) return;
   lastNetworkDiagLogMs = millis();
 
-  IPAddress localIp = WiFi.localIP();
-  IPAddress gatewayIp = WiFi.gatewayIP();
+  IPAddress localIp    = WiFi.localIP();
+  IPAddress gatewayIp  = WiFi.gatewayIP();
   IPAddress subnetMask = WiFi.subnetMask();
 
   Serial.print("Network diag - Local/Gateway/Mask: ");
-  Serial.print(localIp);
-  Serial.print(" / ");
-  Serial.print(gatewayIp);
-  Serial.print(" / ");
+  Serial.print(localIp); Serial.print(" / ");
+  Serial.print(gatewayIp); Serial.print(" / ");
   Serial.println(subnetMask);
 
-  IPAddress primaryHost;
-  if (primaryHost.fromString(API_HOST_PRIMARY)) {
-    Serial.print("Network diag - Primary host ");
-    Serial.print(primaryHost);
-    Serial.print(" same subnet: ");
-    Serial.println(isSameSubnet(localIp, primaryHost, subnetMask) ? "YES" : "NO");
+  IPAddress h;
+  if (h.fromString(API_HOST_PRIMARY)) {
+    Serial.print("Primary host same subnet: ");
+    Serial.println(isSameSubnet(localIp, h, subnetMask) ? "YES" : "NO");
   }
-
-  IPAddress altHost;
-  if (altHost.fromString(API_HOST_ALT_LAN)) {
-    Serial.print("Network diag - Alt host ");
-    Serial.print(altHost);
-    Serial.print(" same subnet: ");
-    Serial.println(isSameSubnet(localIp, altHost, subnetMask) ? "YES" : "NO");
+  if (h.fromString(API_HOST_ALT_LAN)) {
+    Serial.print("Alt host same subnet: ");
+    Serial.println(isSameSubnet(localIp, h, subnetMask) ? "YES" : "NO");
   }
-
-  IPAddress hotspotHost;
-  if (hotspotHost.fromString(API_HOST_FALLBACK)) {
-    Serial.print("Network diag - Hotspot host ");
-    Serial.print(hotspotHost);
-    Serial.print(" same subnet: ");
-    Serial.println(isSameSubnet(localIp, hotspotHost, subnetMask) ? "YES" : "NO");
+  if (h.fromString(API_HOST_FALLBACK)) {
+    Serial.print("Hotspot host same subnet: ");
+    Serial.println(isSameSubnet(localIp, h, subnetMask) ? "YES" : "NO");
   }
 }
 
-void calibrateFlameInactiveLevel() {
-  int lowCount = 0;
-  int highCount = 0;
-
-  Serial.println("Calibrating flame sensor baseline...");
-  for (int i = 0; i < FLAME_CALIBRATION_SAMPLES; i++) {
-    int raw = digitalRead(FLAME_PIN);
-    if (raw == LOW) {
-      lowCount++;
-    } else {
-      highCount++;
-    }
-    delay(5);
-  }
-
-  if (highCount == lowCount) {
-    flameInactiveLevel = FLAME_ACTIVE_LOW ? HIGH : LOW;
-  } else {
-    flameInactiveLevel = highCount > lowCount ? HIGH : LOW;
-  }
-
-  flameInactiveLevelCalibrated = true;
-
-  Serial.print("Flame baseline LOW/HIGH samples: ");
-  Serial.print(lowCount);
-  Serial.print("/");
-  Serial.println(highCount);
-  Serial.print("Flame inactive level inferred as: ");
-  Serial.println(flameInactiveLevel == LOW ? "LOW" : "HIGH");
-}
-
-int readStableFlameState(int samples) {
-  int activeCount = 0;
-
-  if (!flameInactiveLevelCalibrated) {
-    flameInactiveLevel = FLAME_ACTIVE_LOW ? HIGH : LOW;
-  }
-
-  for (int i = 0; i < samples; i++) {
-    int flameRaw = digitalRead(FLAME_PIN);
-    bool active = flameRaw != flameInactiveLevel;
-    if (active) {
-      activeCount++;
-    }
-    delay(2);
-  }
-
-  return activeCount >= ((samples / 2) + 1) ? 1 : 0;
-}
-
-String localInitialWarning(const SensorPacket& packet) {
-  if (packet.temperature == 0 && packet.humidity == 0 && packet.smokeGasLevel == 0 && packet.flameDetected == 0) {
-    return "Sensor Fault";
-  }
-
-  if (packet.smokeRaw > 4000) {
-    return "Sensor Malfunction";
-  }
-
-  if (packet.smokeSensorFault && packet.flameDetected == 0) {
-    return "Smoke Sensor Fault";
-  }
-
-  if (packet.flameSensorFault) {
-    return "Flame Sensor Fault";
-  }
-
-  // Safety-first: any stable flame trigger is treated as immediate risk.
-  if (packet.flameDetected == 1) {
-    return "Immediate Fire Alert";
-  }
-
-  if (packet.humidity < 30 && packet.temperature > 45 && packet.smokeGasLevel > 700) {
-    return "Immediate Fire Alert";
-  }
-
-  if (packet.smokeGasLevel > 1200 && packet.temperature > 50) {
-    return "Immediate Fire Alert";
-  }
-
-  if (packet.flameDetected == 0 && packet.temperature > 55 && packet.smokeGasLevel > 900 && packet.humidity < 40) {
-    return "Electrical Fire Risk";
-  }
-
-  if (packet.flameDetected == 0 && packet.humidity > 85 && packet.smokeGasLevel >= 300 && packet.smokeGasLevel < 800 && packet.temperature < 50) {
-    return "Steam Detected";
-  }
-
-  if (packet.flameDetected == 0 && packet.temperature > 50 && packet.smokeGasLevel < 300) {
-    return "Heat Alert";
-  }
-
-  if (packet.smokeGasLevel >= 300 && packet.smokeGasLevel < 500) {
-    return "Mild Smoke Alert";
-  }
-
-  if (packet.smokeGasLevel >= 500 && packet.smokeGasLevel < 800) {
-    return "Smoke Warning Alert";
-  }
-
-  if (packet.smokeGasLevel >= 800 && packet.smokeGasLevel <= 1200) {
-    return "Gas Leakage Alert";
-  }
-
-  return "No Immediate Alert";
-}
-
-void updateLCD(const SensorPacket& packet, const String& status) {
-  lcd.clear();
-
-  lcd.setCursor(0, 0);
-  lcd.print("T:");
-  lcd.print(packet.temperature, 1);
-  lcd.print("C S:");
-  lcd.print(packet.smokeGasLevel);
-
-  lcd.setCursor(0, 1);
-  if (status.length() > 16) {
-    lcd.print(status.substring(0, 16));
-  } else {
-    lcd.print(status);
-  }
-}
-
-void applyLocalFallback(const String& warning, const SensorPacket& packet) {
-  if (warning == "Flame Sensor Fault") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(100, 140, 2);
-    updateLCD(packet, "Flame SensorFlt");
-    return;
-  }
-
-  if (warning == "Smoke Sensor Fault") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(120, 120, 2);
-    updateLCD(packet, "Smoke SensorFlt");
-    return;
-  }
-
-  if (warning == "Sensor Malfunction") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(110, 90, 2);
-    updateLCD(packet, "Sensor Malfunc");
-    return;
-  }
-
-  if (warning == "Sensor Fault") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(90, 90, 2);
-    updateLCD(packet, "Sensor Fault");
-    return;
-  }
-
-  if (warning == "No Immediate Alert") {
-    setLeds(true, false, false);
-    relayOff();
-    digitalWrite(BUZZER_PIN, LOW);
-    updateLCD(packet, "Safe");
-    return;
-  }
-
-  if (warning == "Mild Smoke Alert") {
-    setLeds(true, true, false);
-    relayOff();
-    buzzerBeep(80, 120, 1);
-    updateLCD(packet, "Mild Smoke");
-    return;
-  }
-
-  if (warning == "Smoke Warning Alert") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(120, 140, 2);
-    updateLCD(packet, "Smoke Warning");
-    return;
-  }
-
-  if (warning == "Gas Leakage Alert") {
-    setLeds(false, true, true);
-    relayOn();
-    buzzerBeep(220, 130, 3);
-    updateLCD(packet, "Gas Leakage");
-    return;
-  }
-
-  if (warning == "Heat Alert") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(160, 140, 2);
-    updateLCD(packet, "Heat Alert");
-    return;
-  }
-
-  if (warning == "Steam Detected") {
-    setLeds(true, true, false);
-    relayOff();
-    buzzerBeep(70, 130, 1);
-    updateLCD(packet, "Steam Detected");
-    return;
-  }
-
-  if (warning == "Electrical Fire Risk") {
-    setLeds(false, true, true);
-    relayOn();
-    buzzerBeep(260, 120, 3);
-    updateLCD(packet, "Elec Fire Risk");
-    return;
-  }
-
-  if (warning == "Immediate Fire Alert") {
-    setLeds(false, false, true);
-    relayOn();
-    buzzerBeep(450, 100, 3);
-    updateLCD(packet, "Fire Emergency");
-    return;
-  }
-
-  setLeds(false, true, false);
-  relayOff();
-  buzzerBeep(100, 80, 1);
-  updateLCD(packet, "Unknown Status");
-}
-
-void applyServerDecision(const String& prediction, const SensorPacket& packet) {
-  if (prediction == "Sensor Malfunction") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(110, 90, 2);
-    updateLCD(packet, "Sensor Malfunc");
-    return;
-  }
-
-  if (prediction == "Sensor Fault") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(90, 90, 2);
-    updateLCD(packet, "Sensor Fault");
-    return;
-  }
-
-  if (prediction == "False Alarm") {
-    setLeds(true, false, false);
-    relayOff();
-    digitalWrite(BUZZER_PIN, LOW);
-    updateLCD(packet, "False Alarm");
-    return;
-  }
-
-  if (prediction == "Smoke Warning") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(120, 140, 2);
-    updateLCD(packet, "Smoke Warning");
-    return;
-  }
-
-  if (prediction == "Gas Leakage") {
-    setLeds(false, true, true);
-    relayOn();
-    buzzerBeep(220, 130, 3);
-    updateLCD(packet, "Gas Leakage");
-    return;
-  }
-
-  if (prediction == "Heat Alert") {
-    setLeds(false, true, false);
-    relayOff();
-    buzzerBeep(160, 140, 2);
-    updateLCD(packet, "Heat Alert");
-    return;
-  }
-
-  if (prediction == "Steam Detected") {
-    setLeds(true, true, false);
-    relayOff();
-    buzzerBeep(70, 130, 1);
-    updateLCD(packet, "Steam Detected");
-    return;
-  }
-
-  if (prediction == "Electrical Fire Risk") {
-    setLeds(false, true, true);
-    relayOn();
-    buzzerBeep(260, 120, 3);
-    updateLCD(packet, "Elec Fire Risk");
-    return;
-  }
-
-  if (prediction == "Fire Emergency") {
-    setLeds(false, false, true);
-    relayOn();
-    buzzerBeep(450, 100, 3);
-    updateLCD(packet, "Fire Emergency");
-    return;
-  }
-
-  setLeds(false, true, false);
-  relayOff();
-  buzzerBeep(100, 80, 1);
-  updateLCD(packet, "Unknown Status");
-}
-
-SensorPacket readSensors() {
-  SensorPacket packet;
-
-  packet.temperature = dht.readTemperature();
-  packet.humidity = dht.readHumidity();
-  packet.smokeRaw = readSmokeAverage(10);
-  packet.smokeGasLevel = normalizeSmokeLevel(packet.smokeRaw);
-
-  if (packet.smokeRaw <= SMOKE_ZERO_THRESHOLD) {
-    smokeZeroCycles++;
-  } else {
-    smokeZeroCycles = 0;
-  }
-
-  packet.smokeSensorFault = smokeZeroCycles >= SMOKE_SENSOR_FAULT_CYCLES;
-
-  packet.flameDetected = readStableFlameState(7);
-
-  if (isnan(packet.temperature)) {
-    packet.temperature = 0.0;
-  }
-
-  if (isnan(packet.humidity)) {
-    packet.humidity = 0.0;
-  }
-
-  bool likelyFalseFlame = packet.flameDetected == 1
-    && packet.smokeGasLevel <= FLAME_FAULT_MAX_SMOKE_LEVEL
-    && packet.temperature < FLAME_FAULT_MAX_TEMP_C
-    && packet.humidity > FLAME_FAULT_MIN_HUMIDITY;
-
-  if (likelyFalseFlame) {
-    flameSuspiciousCycles++;
-  } else if (flameSuspiciousCycles > 0) {
-    flameSuspiciousCycles--;
-  }
-
-  packet.flameSensorFault = flameSuspiciousCycles >= FLAME_FAULT_CONFIRM_CYCLES;
-
-  if (packet.flameSensorFault) {
-    packet.flameDetected = 0;
-    if (millis() - lastFlameFaultLogMs > FLAME_FAULT_LOG_INTERVAL_MS) {
-      lastFlameFaultLogMs = millis();
-      Serial.println("Flame sensor appears stuck active under safe conditions. Marking as Flame Sensor Fault.");
-    }
-  }
-
-  return packet;
-}
-
+// --------------------------------------------------
+// connectWifi
+// FIX 1: Wait for both WL_CONNECTED AND a valid DHCP IP (not just WL_CONNECTED).
+// Previously the loop exited as soon as WL_CONNECTED was true, but at that
+// point the IP could still be 0.0.0.0 causing every POST to fail immediately.
+// --------------------------------------------------
 void connectWifi() {
   if (usingPlaceholderCredentials()) {
-    Serial.println("WiFi credentials are placeholders. Update WIFI_SSID and WIFI_PASSWORD in firmware.");
+    Serial.println("WiFi credentials are placeholders. Update WIFI_SSID and WIFI_PASSWORD.");
     return;
   }
 
@@ -691,12 +232,15 @@ void connectWifi() {
   Serial.println(WIFI_SSID);
 
   unsigned long startMs = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startMs < WIFI_CONNECT_TIMEOUT_MS) {
+  while (millis() - startMs < WIFI_CONNECT_TIMEOUT_MS) {
+    if (WiFi.status() == WL_CONNECTED &&
+        WiFi.localIP() != IPAddress(0, 0, 0, 0)) break;   // FIX 1
     Serial.print(".");
     delay(500);
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED &&
+      WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
     Serial.println();
     Serial.print("Connected. IP Address: ");
     Serial.println(WiFi.localIP());
@@ -710,114 +254,345 @@ void connectWifi() {
   }
 }
 
+// --------------------------------------------------
+// ensureWifiConnected
+// FIX 2: Added DHCP polling loop after WiFi.begin().
+// Previously the function returned immediately after WiFi.begin() with no wait,
+// so the next loop() iteration called postToBackend() before DHCP was done,
+// resulting in IP 0.0.0.0 and "connection refused" on every endpoint.
+// --------------------------------------------------
 void ensureWifiConnected() {
-  if (WiFi.status() == WL_CONNECTED) {
-    return;
-  }
+  if (WiFi.status() == WL_CONNECTED &&
+      WiFi.localIP() != IPAddress(0, 0, 0, 0)) return;   // FIX 2
 
-  if (millis() - lastWifiRetryMs < WIFI_RETRY_INTERVAL_MS) {
-    return;
-  }
-
+  if (millis() - lastWifiRetryMs < WIFI_RETRY_INTERVAL_MS) return;
   lastWifiRetryMs = millis();
+
   if (usingPlaceholderCredentials()) {
     Serial.println("WiFi retry skipped: placeholder credentials.");
     return;
   }
 
-  Serial.print("WiFi disconnected. Retrying connection. Last status: ");
+  Serial.print("WiFi disconnected. Retrying. Last status: ");
   wl_status_t status = (wl_status_t)WiFi.status();
   Serial.println(wifiStatusToText(status));
   printWifiFailureHints(status);
+
   WiFi.disconnect(true);
   delay(100);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  // FIX 2: Wait up to WIFI_DHCP_WAIT_MS for association + DHCP lease.
+  unsigned long t = millis();
+  while (millis() - t < WIFI_DHCP_WAIT_MS) {
+    if (WiFi.status() == WL_CONNECTED &&
+        WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+      Serial.print("Reconnected. IP: ");
+      Serial.println(WiFi.localIP());
+      return;
+    }
+    delay(300);
+  }
+  Serial.println("WiFi reconnect timed out. Will retry next cycle.");
 }
 
+// --------------------------------------------------
+// Smoke Sensor
+// --------------------------------------------------
+int readSmokeAverage(int samples) {
+  long total = 0;
+  for (int i = 0; i < samples; i++) { total += analogRead(MQ_PIN); delay(10); }
+  return (int)(total / samples);
+}
+
+void calibrateSmokeBaseline() {
+  Serial.println("Warming up smoke sensor...");
+  unsigned long start = millis();
+  while (millis() - start < SMOKE_WARMUP_MS) delay(100);
+
+  long total = 0;
+  for (int i = 0; i < SMOKE_BASELINE_SAMPLES; i++) { total += analogRead(MQ_PIN); delay(15); }
+
+  smokeBaselineRaw = (float)total / (float)SMOKE_BASELINE_SAMPLES;
+  if (smokeBaselineRaw < 0.0f) smokeBaselineRaw = 0.0f;
+  smokeFilteredLevel = 0.0f;
+  smokeCalibrated    = true;
+
+  Serial.print("Smoke baseline calibrated (raw): ");
+  Serial.println((int)smokeBaselineRaw);
+}
+
+int normalizeSmokeLevel(int rawSmoke) {
+  if (!smokeCalibrated) {
+    smokeBaselineRaw   = (float)rawSmoke;
+    smokeFilteredLevel = 0.0f;
+    smokeCalibrated    = true;
+  }
+
+  float adjusted = (float)rawSmoke - smokeBaselineRaw;
+  if (adjusted < 0.0f) adjusted = 0.0f;
+
+  adjusted -= SMOKE_NOISE_FLOOR;
+  if (adjusted < 0.0f) adjusted = 0.0f;
+
+  if (adjusted < (SMOKE_NOISE_FLOOR * 0.5f)) {
+    smokeBaselineRaw = (SMOKE_BASELINE_DRIFT_ALPHA * smokeBaselineRaw)
+                     + ((1.0f - SMOKE_BASELINE_DRIFT_ALPHA) * (float)rawSmoke);
+  }
+
+  smokeFilteredLevel = (SMOKE_FILTER_ALPHA * smokeFilteredLevel)
+                     + ((1.0f - SMOKE_FILTER_ALPHA) * adjusted);
+  if (smokeFilteredLevel < 0.0f) smokeFilteredLevel = 0.0f;
+
+  return (int)(smokeFilteredLevel + 0.5f);
+}
+
+// --------------------------------------------------
+// Flame Sensor
+// --------------------------------------------------
+void calibrateFlameInactiveLevel() {
+  int lowCount = 0, highCount = 0;
+  Serial.println("Calibrating flame sensor baseline...");
+
+  for (int i = 0; i < FLAME_CALIBRATION_SAMPLES; i++) {
+    if (digitalRead(FLAME_PIN) == LOW) lowCount++;
+    else highCount++;
+    delay(5);
+  }
+
+  flameInactiveLevel = (highCount == lowCount)
+    ? (FLAME_ACTIVE_LOW ? HIGH : LOW)
+    : (highCount > lowCount ? HIGH : LOW);
+
+  flameInactiveLevelCalibrated = true;
+
+  Serial.print("Flame baseline LOW/HIGH samples: ");
+  Serial.print(lowCount); Serial.print("/"); Serial.println(highCount);
+  Serial.print("Flame inactive level: ");
+  Serial.println(flameInactiveLevel == LOW ? "LOW" : "HIGH");
+}
+
+int readStableFlameState(int samples) {
+  if (!flameInactiveLevelCalibrated)
+    flameInactiveLevel = FLAME_ACTIVE_LOW ? HIGH : LOW;
+
+  int activeCount = 0;
+  for (int i = 0; i < samples; i++) {
+    if (digitalRead(FLAME_PIN) != flameInactiveLevel) activeCount++;
+    delay(2);
+  }
+  return activeCount >= ((samples / 2) + 1) ? 1 : 0;
+}
+
+// --------------------------------------------------
+// readSensors
+// --------------------------------------------------
+SensorPacket readSensors() {
+  SensorPacket packet;
+
+  packet.temperature   = dht.readTemperature();
+  packet.humidity      = dht.readHumidity();
+  packet.smokeRaw      = readSmokeAverage(10);
+  packet.smokeGasLevel = normalizeSmokeLevel(packet.smokeRaw);
+
+  // FIX 5: Decrement instead of hard-reset to 0.
+  // A single non-zero ADC reading previously cleared the entire fault counter,
+  // allowing a real wiring/power fault to be hidden by one brief spike.
+  if (packet.smokeRaw <= SMOKE_ZERO_THRESHOLD) {
+    smokeZeroCycles++;
+  } else if (smokeZeroCycles > 0) {
+    smokeZeroCycles--;   // FIX 5
+  }
+  packet.smokeSensorFault = smokeZeroCycles >= SMOKE_SENSOR_FAULT_CYCLES;
+
+  packet.flameDetected = readStableFlameState(7);
+
+  if (isnan(packet.temperature)) packet.temperature = 0.0;
+  if (isnan(packet.humidity))    packet.humidity    = 0.0;
+
+  bool likelyFalseFlame = packet.flameDetected == 1
+    && packet.smokeGasLevel <= FLAME_FAULT_MAX_SMOKE_LEVEL
+    && packet.temperature   <  FLAME_FAULT_MAX_TEMP_C
+    && packet.humidity      >  FLAME_FAULT_MIN_HUMIDITY;
+
+  if (likelyFalseFlame) flameSuspiciousCycles++;
+  else if (flameSuspiciousCycles > 0) flameSuspiciousCycles--;
+
+  packet.flameSensorFault = flameSuspiciousCycles >= FLAME_FAULT_CONFIRM_CYCLES;
+
+  if (packet.flameSensorFault) {
+    packet.flameDetected = 0;
+    if (millis() - lastFlameFaultLogMs > FLAME_FAULT_LOG_INTERVAL_MS) {
+      lastFlameFaultLogMs = millis();
+      Serial.println("Flame sensor stuck active under safe conditions — Flame Sensor Fault.");
+    }
+  }
+
+  return packet;
+}
+
+// --------------------------------------------------
+// Local Warning Logic
+// --------------------------------------------------
+String localInitialWarning(const SensorPacket& p) {
+  if (p.temperature == 0 && p.humidity == 0 &&
+      p.smokeGasLevel == 0 && p.flameDetected == 0)     return "Sensor Fault";
+  if (p.smokeRaw > 4000)                                 return "Sensor Malfunction";
+  if (p.smokeSensorFault && p.flameDetected == 0)        return "Smoke Sensor Fault";
+  if (p.flameSensorFault)                                return "Flame Sensor Fault";
+  if (p.flameDetected == 1)                              return "Immediate Fire Alert";
+  if (p.humidity < 30 && p.temperature > 45 &&
+      p.smokeGasLevel > 700)                             return "Immediate Fire Alert";
+  if (p.smokeGasLevel > 1200 && p.temperature > 50)      return "Immediate Fire Alert";
+  if (p.flameDetected == 0 && p.temperature > 55 &&
+      p.smokeGasLevel > 900 && p.humidity < 40)          return "Electrical Fire Risk";
+  if (p.flameDetected == 0 && p.humidity > 85 &&
+      p.smokeGasLevel >= 300 && p.smokeGasLevel < 800 &&
+      p.temperature < 50)                                return "Steam Detected";
+  if (p.flameDetected == 0 && p.temperature > 50 &&
+      p.smokeGasLevel < 300)                             return "Heat Alert";
+  if (p.smokeGasLevel >= 300 && p.smokeGasLevel < 500)   return "Mild Smoke Alert";
+  if (p.smokeGasLevel >= 500 && p.smokeGasLevel < 800)   return "Smoke Warning Alert";
+  if (p.smokeGasLevel >= 800 && p.smokeGasLevel <= 1200) return "Gas Leakage Alert";
+  return "No Immediate Alert";
+}
+
+// --------------------------------------------------
+// LCD
+// --------------------------------------------------
+void updateLCD(const SensorPacket& p, const String& status) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("T:"); lcd.print(p.temperature, 1);
+  lcd.print("C S:"); lcd.print(p.smokeGasLevel);
+  lcd.setCursor(0, 1);
+  lcd.print(status.length() > 16 ? status.substring(0, 16) : status);
+}
+
+// --------------------------------------------------
+// Local Fallback Actions
+// --------------------------------------------------
+void applyLocalFallback(const String& w, const SensorPacket& p) {
+  if (w == "Flame Sensor Fault")   { setLeds(0,1,0); relayOff(); buzzerBeep(100,140,2); updateLCD(p,"Flame SensorFlt"); return; }
+  if (w == "Smoke Sensor Fault")   { setLeds(0,1,0); relayOff(); buzzerBeep(120,120,2); updateLCD(p,"Smoke SensorFlt"); return; }
+  if (w == "Sensor Malfunction")   { setLeds(0,1,0); relayOff(); buzzerBeep(110,90,2);  updateLCD(p,"Sensor Malfunc");  return; }
+  if (w == "Sensor Fault")         { setLeds(0,1,0); relayOff(); buzzerBeep(90,90,2);   updateLCD(p,"Sensor Fault");    return; }
+  if (w == "No Immediate Alert")   { setLeds(1,0,0); relayOff(); digitalWrite(BUZZER_PIN,LOW); updateLCD(p,"Safe"); return; }
+  if (w == "Mild Smoke Alert")     { setLeds(1,1,0); relayOff(); buzzerBeep(80,120,1);  updateLCD(p,"Mild Smoke");      return; }
+  if (w == "Smoke Warning Alert")  { setLeds(0,1,0); relayOff(); buzzerBeep(120,140,2); updateLCD(p,"Smoke Warning");   return; }
+  if (w == "Gas Leakage Alert")    { setLeds(0,1,1); relayOn();  buzzerBeep(220,130,3); updateLCD(p,"Gas Leakage");     return; }
+  if (w == "Heat Alert")           { setLeds(0,1,0); relayOff(); buzzerBeep(160,140,2); updateLCD(p,"Heat Alert");      return; }
+  if (w == "Steam Detected")       { setLeds(1,1,0); relayOff(); buzzerBeep(70,130,1);  updateLCD(p,"Steam Detected");  return; }
+  if (w == "Electrical Fire Risk") { setLeds(0,1,1); relayOn();  buzzerBeep(260,120,3); updateLCD(p,"Elec Fire Risk");  return; }
+  if (w == "Immediate Fire Alert") { setLeds(0,0,1); relayOn();  buzzerBeep(450,100,3); updateLCD(p,"Fire Emergency");  return; }
+  setLeds(0,1,0); relayOff(); buzzerBeep(100,80,1); updateLCD(p,"Unknown Status");
+}
+
+// --------------------------------------------------
+// Server Decision Actions
+// --------------------------------------------------
+void applyServerDecision(const String& pred, const SensorPacket& p) {
+  if (pred == "Sensor Malfunction")   { setLeds(0,1,0); relayOff(); buzzerBeep(110,90,2);  updateLCD(p,"Sensor Malfunc");  return; }
+  if (pred == "Sensor Fault")         { setLeds(0,1,0); relayOff(); buzzerBeep(90,90,2);   updateLCD(p,"Sensor Fault");    return; }
+  if (pred == "False Alarm")          { setLeds(1,0,0); relayOff(); digitalWrite(BUZZER_PIN,LOW); updateLCD(p,"False Alarm"); return; }
+  if (pred == "Smoke Warning")        { setLeds(0,1,0); relayOff(); buzzerBeep(120,140,2); updateLCD(p,"Smoke Warning");   return; }
+  if (pred == "Gas Leakage")          { setLeds(0,1,1); relayOn();  buzzerBeep(220,130,3); updateLCD(p,"Gas Leakage");     return; }
+  if (pred == "Heat Alert")           { setLeds(0,1,0); relayOff(); buzzerBeep(160,140,2); updateLCD(p,"Heat Alert");      return; }
+  if (pred == "Steam Detected")       { setLeds(1,1,0); relayOff(); buzzerBeep(70,130,1);  updateLCD(p,"Steam Detected");  return; }
+  if (pred == "Electrical Fire Risk") { setLeds(0,1,1); relayOn();  buzzerBeep(260,120,3); updateLCD(p,"Elec Fire Risk");  return; }
+  if (pred == "Fire Emergency")       { setLeds(0,0,1); relayOn();  buzzerBeep(450,100,3); updateLCD(p,"Fire Emergency");  return; }
+  setLeds(0,1,0); relayOff(); buzzerBeep(100,80,1); updateLCD(p,"Unknown Status");
+}
+
+// --------------------------------------------------
+// postToBackend
+// --------------------------------------------------
 bool postToBackend(const SensorPacket& packet, String& predictionOut) {
-  if (WiFi.status() != WL_CONNECTED) {
+  // FIX 1: Block HTTP attempts when DHCP hasn't assigned an IP yet.
+  // WL_CONNECTED can be true while localIP() is still 0.0.0.0 — every TCP
+  // connect in that state fails with "connection refused" immediately.
+  if (WiFi.status() != WL_CONNECTED) return false;
+  if (WiFi.localIP() == IPAddress(0, 0, 0, 0)) {
+    Serial.println("WiFi connected but no IP yet (DHCP pending). Skipping POST.");
     return false;
   }
 
   logNetworkDiagnostics();
 
-  IPAddress localIp = WiFi.localIP();
+  IPAddress localIp    = WiFi.localIP();
   IPAddress subnetMask = WiFi.subnetMask();
   IPAddress primaryHost;
   bool primarySameSubnet = false;
-  if (primaryHost.fromString(API_HOST_PRIMARY)) {
+  if (primaryHost.fromString(API_HOST_PRIMARY))
     primarySameSubnet = isSameSubnet(localIp, primaryHost, subnetMask);
-  }
 
-  StaticJsonDocument<256> payload;
-  payload["device_id"] = DEVICE_ID;
-  payload["temperature"] = packet.temperature;
-  payload["humidity"] = packet.humidity;
-  payload["smoke_gas_level"] = packet.smokeGasLevel;
-  payload["flame_detected"] = packet.flameDetected;
+  // FIX 4a: Request document size 256 -> 384 to fit all fields without overflow.
+  // FIX 4b: Added smoke_sensor_fault — it was never sent to the server before.
+  StaticJsonDocument<384> payload;
+  payload["device_id"]          = DEVICE_ID;
+  payload["temperature"]        = packet.temperature;
+  payload["humidity"]           = packet.humidity;
+  payload["smoke_gas_level"]    = packet.smokeGasLevel;
+  payload["flame_detected"]     = packet.flameDetected;
   payload["flame_sensor_fault"] = packet.flameSensorFault;
+  payload["smoke_sensor_fault"] = packet.smokeSensorFault; // FIX 4b
 
   String requestBody;
   serializeJson(payload, requestBody);
 
-  String endpoints[5];
+  // FIX 6: Array was declared size 5 but only 4 entries are ever added.
+  String endpoints[4];
   int endpointCount = 0;
   endpoints[endpointCount++] = String(API_URL_PRIMARY);
-  if (String(API_URL_ALT_LAN) != endpoints[0]) {
-    endpoints[endpointCount++] = String(API_URL_ALT_LAN);
-  }
-  if (endpoints[0] != String(API_URL_FALLBACK)) {
-    endpoints[endpointCount++] = String(API_URL_FALLBACK);
-  }
+  if (String(API_URL_ALT_LAN)  != endpoints[0]) endpoints[endpointCount++] = String(API_URL_ALT_LAN);
+  if (String(API_URL_FALLBACK) != endpoints[0]) endpoints[endpointCount++] = String(API_URL_FALLBACK);
 
+  // FIX 6: Guard against gateway being 0.0.0.0 — that would add a broken URL.
   String gatewayHost = WiFi.gatewayIP().toString();
-  if (gatewayHost != "0.0.0.0") {
+  if (gatewayHost != "0.0.0.0" && gatewayHost.length() > 0) {
     String gatewayUrl = "http://" + gatewayHost + ":8000/api/v1/events/predict";
     bool alreadyPresent = false;
-    for (int i = 0; i < endpointCount; i++) {
-      if (endpoints[i] == gatewayUrl) {
-        alreadyPresent = true;
-        break;
-      }
-    }
-    if (!alreadyPresent) {
+    for (int i = 0; i < endpointCount; i++)
+      if (endpoints[i] == gatewayUrl) { alreadyPresent = true; break; }
+    if (!alreadyPresent && endpointCount < 4)
       endpoints[endpointCount++] = gatewayUrl;
-    }
   }
 
-  int lastHttpCode = -999;
+  int    lastHttpCode      = -999;
   String lastTriedEndpoint = "";
 
-  for (int endpointIndex = 0; endpointIndex < endpointCount; endpointIndex++) {
-    const char* activeApiUrl = endpoints[endpointIndex].c_str();
-    Serial.print("Trying backend endpoint: ");
-    Serial.println(activeApiUrl);
+  for (int ei = 0; ei < endpointCount; ei++) {
+    const char* url = endpoints[ei].c_str();
+    Serial.print("Trying backend endpoint: "); Serial.println(url);
 
     for (int attempt = 1; attempt <= BACKEND_POST_RETRY_COUNT; attempt++) {
       HTTPClient http;
-      http.begin(activeApiUrl);
+      http.begin(url);
       http.addHeader("Content-Type", "application/json");
       http.setTimeout(BACKEND_HTTP_TIMEOUT_MS);
 
       int httpCode = http.POST(requestBody);
-      lastHttpCode = httpCode;
-      lastTriedEndpoint = String(activeApiUrl);
+      lastHttpCode      = httpCode;
+      lastTriedEndpoint = String(url);
+
       if (httpCode >= 200 && httpCode < 300) {
         String response = http.getString();
         http.end();
 
-        StaticJsonDocument<1024> responseJson;
+        // FIX 4c: Response document size 1024 -> 1536 to prevent silent truncation.
+        StaticJsonDocument<1536> responseJson;
         DeserializationError err = deserializeJson(responseJson, response);
-        if (err) {
-          Serial.println("Backend response parse failed.");
-          return false;
-        }
+        if (err) { Serial.println("Backend response parse failed."); return false; }
 
+        // FIX 4d: Log which key was matched so response-format mismatches are visible.
         const char* prediction = responseJson["event"]["prediction"];
         if (prediction == nullptr) {
           prediction = responseJson["prediction"];
+          if (prediction != nullptr)
+            Serial.println("Note: using top-level 'prediction' key (event.prediction absent).");
         }
         if (prediction == nullptr) {
+          Serial.println("Backend response missing prediction field.");
           return false;
         }
 
@@ -826,83 +601,62 @@ bool postToBackend(const SensorPacket& packet, String& predictionOut) {
       }
 
       Serial.print("Backend POST failed (endpoint ");
-      Serial.print(endpointIndex + 1);
-      Serial.print("/");
-      Serial.print(endpointCount);
+      Serial.print(ei + 1); Serial.print("/"); Serial.print(endpointCount);
       Serial.print(", attempt ");
-      Serial.print(attempt);
-      Serial.print("/");
-      Serial.print(BACKEND_POST_RETRY_COUNT);
-      Serial.print("). HTTP code: ");
-      Serial.println(httpCode);
+      Serial.print(attempt); Serial.print("/"); Serial.print(BACKEND_POST_RETRY_COUNT);
+      Serial.print("). HTTP code: "); Serial.println(httpCode);
+
       if (httpCode > 0) {
-        String errorBody = http.getString();
-        if (errorBody.length() > 0) {
-          Serial.print("Backend error body: ");
-          Serial.println(errorBody);
-        }
+        String body = http.getString();
+        if (body.length() > 0) { Serial.print("Error body: "); Serial.println(body); }
       } else {
-        String transportError = HTTPClient::errorToString(httpCode);
-        Serial.print("Transport detail: ");
-        Serial.println(transportError);
+        Serial.print("Transport detail: "); Serial.println(HTTPClient::errorToString(httpCode));
         Serial.print("WiFi IP/Gateway: ");
-        Serial.print(WiFi.localIP());
-        Serial.print(" / ");
-        Serial.println(WiFi.gatewayIP());
-
-        if (endpointIndex == 0 && primarySameSubnet) {
-          Serial.println("Likely root cause: host firewall block or AP client isolation (same subnet but TCP connect fails).");
-          Serial.println("Action: allow inbound TCP 8000 on Windows and use Private WiFi profile.");
+        Serial.print(WiFi.localIP()); Serial.print(" / "); Serial.println(WiFi.gatewayIP());
+        if (ei == 0 && primarySameSubnet) {
+          Serial.println("Likely cause: host firewall or AP client isolation.");
+          Serial.println("Action: allow inbound TCP 8000 on Windows, use Private WiFi profile.");
         }
-
-        // Transport-level failure (e.g. -1). Reconnect WiFi before next retry.
-        Serial.println("Transport error. Attempting WiFi recovery before retry...");
-        WiFi.disconnect(false, false);
-        delay(120);
-        WiFi.reconnect();
-        delay(BACKEND_NEGATIVE_CODE_WIFI_RECOVERY_DELAY_MS);
+        // FIX 3: Removed WiFi.disconnect()/reconnect() from here.
+        // That caused a 700ms+ stall per retry attempt and tore down the
+        // interface while other endpoints were still waiting to be tried.
+        Serial.println("Transport error. Moving to next endpoint.");
       }
+
       http.end();
-
-      if (attempt < BACKEND_POST_RETRY_COUNT) {
-        delay(BACKEND_POST_RETRY_DELAY_MS);
-      }
+      if (attempt < BACKEND_POST_RETRY_COUNT) delay(BACKEND_POST_RETRY_DELAY_MS);
     }
   }
 
   if (millis() - lastBackendReachabilityLogMs > BACKEND_REACHABILITY_LOG_INTERVAL_MS) {
     lastBackendReachabilityLogMs = millis();
-    Serial.println("Backend host unreachable from ESP32 after trying all endpoints.");
-    Serial.print("Last tried endpoint: ");
-    Serial.println(lastTriedEndpoint);
-    Serial.print("Last HTTP code: ");
-    Serial.println(lastHttpCode);
-    Serial.println("Hint: Ensure backend is running and Windows firewall allows TCP 8000 on Private network.");
-    Serial.println("Hint: Ensure ESP32 and backend host are on the same subnet, or use hotspot with 192.168.137.1.");
+    Serial.println("Backend unreachable after trying all endpoints.");
+    Serial.print("Last endpoint: "); Serial.println(lastTriedEndpoint);
+    Serial.print("Last HTTP code: "); Serial.println(lastHttpCode);
+    Serial.println("Hint: ensure backend is running and firewall allows TCP 8000.");
+    Serial.println("Hint: ensure ESP32 and backend are on the same subnet.");
   }
 
   return false;
 }
 
+// --------------------------------------------------
+// setup
+// --------------------------------------------------
 void setup() {
   Serial.begin(115200);
   Serial.println("System booting...");
-  Serial.print("Device ID: ");
-  Serial.println(DEVICE_ID);
-  Serial.print("Primary API URL: ");
-  Serial.println(API_URL_PRIMARY);
-  Serial.print("Alt LAN API URL: ");
-  Serial.println(API_URL_ALT_LAN);
-  Serial.print("Fallback API URL: ");
-  Serial.println(API_URL_FALLBACK);
+  Serial.print("Device ID: ");        Serial.println(DEVICE_ID);
+  Serial.print("Primary API URL: ");  Serial.println(API_URL_PRIMARY);
+  Serial.print("Alt LAN API URL: ");  Serial.println(API_URL_ALT_LAN);
+  Serial.print("Fallback API URL: "); Serial.println(API_URL_FALLBACK);
 
-  pinMode(FLAME_PIN, INPUT_PULLUP);
+  pinMode(FLAME_PIN,  INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(RELAY_PIN, OUTPUT);
-
-  pinMode(LED_GREEN, OUTPUT);
+  pinMode(RELAY_PIN,  OUTPUT);
+  pinMode(LED_GREEN,  OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
-  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_RED,    OUTPUT);
 
   analogReadResolution(12);
   analogSetPinAttenuation(MQ_PIN, ADC_11db);
@@ -912,69 +666,58 @@ void setup() {
   setLeds(true, false, false);
 
   dht.begin();
-
   lcd.init();
   lcd.backlight();
-  lcd.setCursor(0, 0);
-  lcd.print("Fire System");
-  lcd.setCursor(0, 1);
-  lcd.print("Starting...");
+  lcd.setCursor(0, 0); lcd.print("Fire System");
+  lcd.setCursor(0, 1); lcd.print("Starting...");
 
   connectWifi();
   calibrateSmokeBaseline();
   calibrateFlameInactiveLevel();
 }
 
+// --------------------------------------------------
+// loop
+// --------------------------------------------------
 void loop() {
   if (millis() - lastSampleMs < SAMPLE_INTERVAL_MS) {
     delay(50);
     return;
   }
-
   lastSampleMs = millis();
+
   ensureWifiConnected();
 
   SensorPacket packet = readSensors();
 
   Serial.println("----------------------------");
-  Serial.print("Temperature: ");
-  Serial.println(packet.temperature);
-  Serial.print("Humidity: ");
-  Serial.println(packet.humidity);
-  Serial.print("Smoke/Gas Level: ");
-  Serial.println(packet.smokeGasLevel);
-  Serial.print("Smoke Raw: ");
-  Serial.println(packet.smokeRaw);
+  Serial.print("Temperature: ");           Serial.println(packet.temperature);
+  Serial.print("Humidity: ");              Serial.println(packet.humidity);
+  Serial.print("Smoke/Gas Level: ");       Serial.println(packet.smokeGasLevel);
+  Serial.print("Smoke Raw: ");             Serial.println(packet.smokeRaw);
   Serial.print("Smoke Raw (%ADC): ");
-  Serial.println(toPercent((float)packet.smokeRaw, 4095.0f));
-  Serial.print("Smoke Baseline Raw: ");
-  Serial.println((int)smokeBaselineRaw);
+  Serial.println((int)((float)packet.smokeRaw / 4095.0f * 100.0f + 0.5f));
+  Serial.print("Smoke Baseline Raw: ");    Serial.println((int)smokeBaselineRaw);
   Serial.print("Smoke Baseline (%ADC): ");
-  Serial.println(toPercent(smokeBaselineRaw, 4095.0f));
-  Serial.print("Flame Detected: ");
-  Serial.println(packet.flameDetected);
-  Serial.print("Smoke Sensor Fault: ");
-  Serial.println(packet.smokeSensorFault ? "YES" : "NO");
-  Serial.print("Flame Sensor Fault: ");
-  Serial.println(packet.flameSensorFault ? "YES" : "NO");
-  Serial.print("WiFi: ");
-  Serial.println(wifiStatusToText((wl_status_t)WiFi.status()));
+  Serial.println((int)(smokeBaselineRaw / 4095.0f * 100.0f + 0.5f));
+  Serial.print("Flame Detected: ");        Serial.println(packet.flameDetected);
+  Serial.print("Smoke Sensor Fault: ");    Serial.println(packet.smokeSensorFault ? "YES" : "NO");
+  Serial.print("Flame Sensor Fault: ");    Serial.println(packet.flameSensorFault ? "YES" : "NO");
+  Serial.print("WiFi: ");                  Serial.println(wifiStatusToText((wl_status_t)WiFi.status()));
+  Serial.print("IP: ");                    Serial.println(WiFi.localIP());
 
   String warning = localInitialWarning(packet);
-  Serial.print("Initial Warning: ");
-  Serial.println(warning);
+  Serial.print("Initial Warning: "); Serial.println(warning);
 
   String prediction;
   bool sent = postToBackend(packet, prediction);
 
   if (sent) {
     Serial.println("Backend: Connected");
-    Serial.print("Server Prediction: ");
-    Serial.println(prediction);
+    Serial.print("Server Prediction: "); Serial.println(prediction);
     applyServerDecision(prediction, packet);
   } else {
-    Serial.println("Backend: Unavailable");
-    Serial.println("Backend unavailable. Using local logic.");
+    Serial.println("Backend: Unavailable — using local logic.");
     applyLocalFallback(warning, packet);
   }
 }
