@@ -8,10 +8,10 @@
 // --------------------------------------------------
 // WiFi and Backend Configuration
 // --------------------------------------------------
-const char* WIFI_SSID     = "Renu";
-const char* WIFI_PASSWORD = "12345678";
+const char* WIFI_SSID     = "onyx";
+const char* WIFI_PASSWORD = "love162004";
 
-const char* API_HOST_PRIMARY  = "10.202.252.180";
+const char* API_HOST_PRIMARY  = "10.220.51.180";
 const char* API_HOST_ALT_LAN  = "10.19.205.180";
 const char* API_HOST_FALLBACK = "192.168.137.1";
 const uint16_t API_PORT       = 8000;
