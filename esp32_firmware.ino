@@ -16,7 +16,7 @@ const char* API_HOST_ALT_LAN  = "10.19.205.180";
 const char* API_HOST_FALLBACK = "192.168.137.1";
 const uint16_t API_PORT       = 8000;
 
-const char* API_URL_PRIMARY  = "http://10.202.252.180:8000/api/v1/events/predict";
+const char* API_URL_PRIMARY  = "http://10.220.51.180:8000/api/v1/events/predict";
 const char* API_URL_ALT_LAN  = "http://10.19.205.180:8000/api/v1/events/predict";
 const char* API_URL_FALLBACK = "http://192.168.137.1:8000/api/v1/events/predict";
 
