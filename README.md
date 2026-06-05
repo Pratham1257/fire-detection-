@@ -1,5 +1,3 @@
-# Macro Project 1 - AI Fire and Gas Monitoring Platform
-
 ## Project Topic
 
 AI-Enabled IoT-Based Intelligent Fire Detection and Early Warning System
